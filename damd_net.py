@@ -215,6 +215,7 @@ class biGRUencoder(nn.Module):
 
 class Copy(nn.Module):
     def __init__(self, hidden_size, copy_weight=1.):
+        """Calculate copy attention"""
         super().__init__()
         self.Wcopy = nn.Linear(hidden_size, hidden_size)
         self.copy_weight = copy_weight
@@ -231,58 +232,6 @@ class Copy(nn.Module):
         raw_cp_score = torch.tanh(self.Wcopy(enc_out_hs))   #[B,Tenc,H]
         raw_cp_score = torch.einsum('beh,bdh->bde',raw_cp_score, dec_hs)    #[B, Tdec, Tenc]
         return raw_cp_score * self.copy_weight
-
-
-# def get_final_scores(raw_scores, word_onehot_input, input_idx_oov, vocab_size_oov):
-#     """
-#     :param raw_scores: list of tensor of size [B, Tdec, V], [B, Tdec, Tenc1], [B, Tdec, Tenc1] ...
-#     :param word_onehot_input: list of nparray of size [B, Tenci, V+Tenci]
-#     :param input_idx_oov: list of nparray of size [B, Tenc]
-#     :param vocab_size_oov:
-#     :returns: tensor of size [B, Tdec, vocab_size_oov]
-#     """
-
-#     cum_idx = [score.size(2) for score in raw_scores]
-#     for i in range(len(cum_idx) - 1):
-#         cum_idx[i + 1] += cum_idx[i]
-#     cum_idx.insert(0, 0)
-#     logsoftmax = torch.nn.LogSoftmax(dim=2)
-#     normalized_scores = logsoftmax(torch.cat(raw_scores, dim=2))   #[B,Tdec, V+Tenc1+Tenc2+...]
-#     normalized_scores.size()
-
-#     # print('normalized_gen_scores:' , normalized_scores.cpu().detach().numpy()[0,:5, 0:40])
-
-
-#     gen_score = normalized_scores[:, :, cum_idx[0]:cum_idx[1]]   # [B, Tdec, V]
-#     Tdec = gen_score.size(1)
-#     B = gen_score.size(0)
-#     V = gen_score.size(2)
-
-#     total_score = cuda_(torch.zeros(B, Tdec, vocab_size_oov)).fill_(-1e20)   # [B, Tdec, vocab_size_oov]
-#     c_to_g_scores = []
-#     for i in range(1, len(cum_idx) - 1):
-#         cps = normalized_scores[:, :, cum_idx[i]:cum_idx[i+1]]   #[B, Tdec, Tenc_i]
-#         # print('normalized_cp_scores:' , cps.cpu().detach().numpy()[0,:5, 0:40])
-#         one_hot = word_onehot_input[i-1]   #[B, Tenc_i, V+Tenc_i]
-#         cps = torch.einsum('imj,ijn->imn', cps, one_hot)   #[B, Tdec, V+Tenc_i]
-#         cps[cps==0] = -1e20   # zero prob -> -inf log prob
-#         c_to_g_scores.append(cps[:, :, :V])
-#         cp_score = cps[:, :, V:]
-#         # avail_copy_idx = np.argwhere(input_idx_oov[i-1]>V)
-#         avail_copy_idx = (input_idx_oov[i-1]>V).nonzero()
-#         # print(len(copy_idx))
-#         for idx in avail_copy_idx:
-#             b, t = idx[0], idx[1]
-#             ts = total_score[b, :, input_idx_oov[i-1][b, t]].view(Tdec, 1)
-#             cs = cp_score[b, :, t].view(Tdec, 1)
-#             total_score[b, :, input_idx_oov[i-1][b, t]] = torch.logsumexp(torch.cat([ts, cs], 0), 0)
-
-#     m = torch.stack([gen_score] + c_to_g_scores, 3)
-#     # print(m[0, :30, :])
-#     gen_score = torch.logsumexp(m, 3)
-#     total_score[:, :, :V] = gen_score
-#     # print('total_score:' , total_score.cpu().detach().numpy()[0,:3, 0:40])
-#     return total_score.contiguous()   #[B, Tdec, vocab_size_oov]
 
 def get_final_scores(raw_scores, word_onehot_input, input_idx_oov, vocab_size_oov):
     """
@@ -510,7 +459,7 @@ class BeliefSpanDecoder(nn.Module):
         raw_cp_score_user.masked_fill_(self.mask_user.repeat(1,Tdec,1), -1e20)
         raw_scores.append(raw_cp_score_user)
         word_onehot_input.append(inputs['user_onehot'])
-        input_idx_oov.append(inputs['user_nounk'])
+        input_idx_oov.append(inputs['user_nounk'])  # including oov, but not <unk> 
 
         if not first_turn:
             raw_cp_score_pvresp = self.cp_pvresp(hidden_states['resp'], dec_hs)   #[B, Tdec,Tr]
@@ -852,7 +801,7 @@ class DAMD(nn.Module):
         self.reader = reader
         self.vocab = self.reader.vocab
         self.vocab_size = self.vocab.vocab_size
-        self.vsize_oov = self.vocab.vocab_size_oov
+        self.vsize_oov = self.vocab.vocab_size_oov  # including oov
         self.embed_size = cfg.embed_size
         self.hidden_size = cfg.hidden_size
         self.n_layer = cfg.dec_layer_num
@@ -1063,7 +1012,7 @@ class DAMD(nn.Module):
 
     def test_forward(self, inputs, hs, first_turn):
         user_enc, user_enc_last_h = self.user_encoder(inputs['user'])
-        usdx_enc, usdx_enc_last_h = self.usdx_encoder(inputs['usdx'])
+        usdx_enc, usdx_enc_last_h = self.usdx_encoder(inputs['usdx'])  # delexicalized user utterance
         resp_enc, resp_enc_last_h = self.usdx_encoder(inputs['pv_resp'])
         hs['user'] = user_enc
         hs['usdx'] = usdx_enc

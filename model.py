@@ -47,9 +47,9 @@ class Model(object):
                 continue
             if not cfg.enable_dspn and item == 'dspn':
                 continue
-            inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())
+            inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())  # replace oov to <unk>
             if item in ['user', 'usdx', 'resp', 'bspn']:
-                inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())
+                inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())  # don't replace oov to <unk>
             else:
                 inputs[item+'_nounk'] = inputs[item]
             # print(item, inputs[item].size())
