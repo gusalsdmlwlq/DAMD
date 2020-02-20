@@ -42,7 +42,7 @@ class _Config:
 
         # model settings
         self.vocab_size = 3000
-        self.embed_size = 50
+        self.embed_size = 100
         self.hidden_size = 100
         self.pointer_dim = 6 # fixed
         self.enc_layer_num = 1
@@ -56,27 +56,32 @@ class _Config:
         self.enable_aspn = True
         self.use_pvaspn = False
         self.enable_bspn = True
-        self.bspn_mode = 'bsdx' # 'bspn' or 'bsdx'
+        self.bspn_mode = 'bspn' # 'bspn' or 'bsdx'
         self.enable_dspn = False # removed
         self.enable_dst = False
+        
+        # TRADE belief tracker
+        self.enable_trade = True
+        self.parallel_decode = False
+        self.unk_mask = True
 
         # training settings
         self.lr = 0.005
         self.label_smoothing = .0
         self.lr_decay = 0.5
-        self.batch_size = 128
+        self.batch_size = 32
         self.epoch_num = 100
         self.early_stop_count = 5
         self.weight_decay_count = 3
         self.teacher_force = 100
         self.multi_acts_training = False
-        self.multi_act_sampling_num = 1
+        self.multi_act_sampling_num = 3
         self.valid_loss = 'score'
 
         # evaluation settings
         self.eval_load_path ='experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3'
         self.eval_per_domain = False
-        self.use_true_pv_resp = True
+        self.use_true_pv_resp = False
         self.use_true_prev_bspn = False
         self.use_true_prev_aspn = False
         self.use_true_prev_dspn = False
@@ -90,12 +95,12 @@ class _Config:
         self.same_eval_as_cambridge = True
         self.same_eval_act_f1_as_hdsa = False
         self.aspn_decode_mode = 'greedy'  #beam, greedy, nucleur_sampling, topk_sampling
-        self.beam_width = 5
-        self.nbest = 5
-        self.beam_diverse_param=0.2
+        self.beam_width = 10
+        self.nbest = 10
+        self.beam_diverse_param=0.0
         self.act_selection_scheme = 'high_test_act_f1'
-        self.topk_num = 1
-        self.nucleur_p = 0.
+        self.topk_num = 5
+        self.nucleur_p = 0.9
         self.record_mode = False
 
     def __str__(self):

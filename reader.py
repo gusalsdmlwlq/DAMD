@@ -171,6 +171,9 @@ class MultiWozReader(_ReaderBase):
         if cfg.multi_acts_training:
             self.multi_acts = json.loads(open(cfg.multi_acts_path, 'r').read())
 
+        self.gating_dict = {'ptr': 0, 'dontcare': 1, 'none': 2}
+
+
         test_list = [l.strip().lower() for l in open(cfg.test_list, 'r').readlines()]
         dev_list = [l.strip().lower() for l in open(cfg.dev_list, 'r').readlines()]
         self.dev_files, self.test_files = {}, {}
@@ -320,6 +323,22 @@ class MultiWozReader(_ReaderBase):
             enc['pointer'] = [int(i) for i in t['pointer'].split(',')]
             enc['turn_domain'] = t['turn_domain'].split()
             enc['turn_num'] = t['turn_num']
+
+            # TRADE labels
+            enc["gating_label"] = [self.gating_dict[label] for label in t["gating_label"].split(",")]
+            enc["ptr_label"] = []
+            for labels in t["ptr_label"].split(","):
+                temp = []
+                for label in labels.split():
+                    label_idx = self.vocab.encode(label)
+                    if label_idx >= self.vocab.vocab_size:
+                        temp.append(self.vocab.encode("<unk>"))
+                    else:
+                        temp.append(label_idx)
+                temp.append(self.vocab.encode("<eos_b>"))
+                enc["ptr_label"].append(temp) 
+
+
             if cfg.multi_acts_training:
                 enc['aspn_aug'] = []
                 if fn in self.multi_acts:
@@ -453,7 +472,7 @@ class MultiWozReader(_ReaderBase):
                     continue
                 prev_np = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method='pre')
                 inputs[item+'_np'] = prev_np
-                if item in ['pv_resp', 'pv_bspn']:
+                if item in ['pv_resp', 'pv_bspn', "pv_aspn"]:
                     inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
                     inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
                 else:
@@ -471,7 +490,7 @@ class MultiWozReader(_ReaderBase):
             trunc_method = 'post' if item == 'resp' else 'pre'
             # max_length = cfg.max_nl_length if item in ['user', 'usdx', 'resp'] else cfg.max_span_length
             inputs[item+'_np'] = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method=trunc_method)
-            if item in ['user', 'usdx', 'resp', 'bspn']:
+            if item in ['user', 'usdx', 'resp', 'bspn', "aspn"]:
                 inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
                 inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
             else:
@@ -500,6 +519,20 @@ class MultiWozReader(_ReaderBase):
         inputs['db_np'] = np.array(py_batch['pointer'])
         inputs['turn_domain'] = py_batch['turn_domain']
 
+
+        # TRADE
+        inputs["gating_label_np"] = np.array(py_batch["gating_label"])
+        batch_size = len(py_batch["ptr_label"])
+        slot_num = inputs["gating_label_np"].shape[1]
+        ptr_max_len = max([len(label) for batch in py_batch["ptr_label"] for label in batch])
+        inputs["ptr_label_np"] = np.zeros((batch_size, slot_num, ptr_max_len))
+        for bidx, batch in enumerate(py_batch["ptr_label"]):   
+            for idx, label in enumerate(batch):
+                label_len = len(label)
+                inputs["ptr_label_np"][bidx, idx, :label_len] = np.array(label)
+
+
+
         return inputs
 
     def wrap_result(self, result_dict, eos_syntax=None):
@@ -507,7 +540,19 @@ class MultiWozReader(_ReaderBase):
         results = []
         eos_syntax = ontology.eos_tokens if not eos_syntax else eos_syntax
 
-        if cfg.bspn_mode == 'bspn':
+        gating_dict = {'ptr': 0, 'dontcare': 1, 'none': 2}
+        slot_list = [
+            'hotel-pricerange', 'hotel-type', 'hotel-parking', 'hotel-stay', 'hotel-day', 'hotel-people', \
+            'hotel-area', 'hotel-stars', 'hotel-internet', 'train-destination', 'train-day', 'train-departure', 'train-arriveby', \
+            'train-people', 'train-leaveat', 'attraction-area', 'restaurant-food', 'restaurant-pricerange', 'restaurant-area', \
+            'attraction-name', 'restaurant-name', 'attraction-type', 'hotel-name', 'taxi-leaveat', 'taxi-destination', 'taxi-departure', \
+            'restaurant-time', 'restaurant-day', 'restaurant-people', 'taxi-arriveby', "hospital-department"
+        ]
+
+        if cfg.enable_trade:
+            field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                        'dspn_gen', 'dspn', 'pointer', "gating_label", "trade_gate", "ptr_label", "trade_ptr"]
+        elif cfg.bspn_mode == 'bspn':
             field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'pointer']
         elif not cfg.enable_dst:
@@ -523,13 +568,36 @@ class MultiWozReader(_ReaderBase):
             entry = {'dial_id': dial_id, 'turn_num': len(turns)}
             for prop in field[2:]:
                 entry[prop] = ''
-            results.append(entry)
+            results.append(entry)  # info of dialogue
             for turn_no, turn in enumerate(turns):
                 entry = {'dial_id': dial_id}
+                trade_gate = []
                 for key in field:
                     if key in ['dial_id']:
                         continue
                     v = turn.get(key, '')
+                    if key == "trade_gate":
+                        trade_gate = v
+                        entry[key] = v
+                        continue
+                    elif key == "trade_ptr":
+                        trade_ptr = []
+                        for idx, slot in enumerate(v):
+                            if trade_gate[idx].item() == 0:
+                                trade_ptr.append(decode_fn(slot.tolist(), eos=eos_syntax["trade"]))
+                            elif trade_gate[idx].item() == 1:
+                                trade_ptr.append("do n't care")
+                            else:
+                                trade_ptr.append("none")
+                        entry[key] = trade_ptr
+                        continue
+                    elif key == "ptr_label":
+                        ptr_label = []
+                        for slot in v:
+                            ptr_label.append(decode_fn(slot, eos=eos_syntax["trade"]))
+                        entry[key] = ptr_label
+                        continue
+
                     if key == 'turn_domain':
                         v = ' '.join(v)
                     entry[key] = decode_fn(v, eos=eos_syntax[key]) if key in eos_syntax and v != '' else v

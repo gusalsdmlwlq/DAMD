@@ -134,9 +134,47 @@ class MultiWozEvaluator(object):
                                                                                         same_eval_as_cambridge=cfg.same_eval_as_cambridge)
         return bleu, success, match
 
+    def trade_eval(self, data):
+        gating_dict = {'ptr': 0, 'dontcare': 1, 'none': 2}
+        joint_count = 0
+        joint_acc = 0
+        slot_count = 0
+        slot_acc = 0
+        for turn_dial in data:
+            if turn_dial["gating_label"] == "":
+                continue
+            joint_count += 1
+            for idx, slot in enumerate(turn_dial["trade_gate"].tolist()):
+                if slot == gating_dict["dontcare"]:
+                    slot_count += 1
+                    turn_dial["trade_ptr"][idx] = "do n't care"
+                    if turn_dial["gating_label"][idx] == slot:
+                        slot_acc += 1
+                elif slot == gating_dict["none"]:
+                    turn_dial["trade_ptr"][idx] = "none"
+                    if turn_dial["gating_label"][idx] != slot:
+                        slot_count += 1
+                else:
+                    slot_count += 1
+                    if turn_dial["gating_label"][idx] == slot and turn_dial["ptr_label"][idx] == turn_dial["trade_ptr"][idx]:
+                        slot_acc += 1
+            if turn_dial["ptr_label"] == turn_dial["trade_ptr"]:
+                joint_acc += 1
+
+        return joint_acc/joint_count, slot_acc/slot_count
+
+
+
+
+
     def _get_metric_results(self, data, domain='all', file_list=None):
         metric_result = {'domain': domain}
         bleu = self.bleu_metric(data, file_list)
+        
+        if cfg.enable_trade:
+            trade_joint_acc, trade_slot_acc = self.trade_eval(data)
+            metric_result.update({'TRADE_joint_acc':trade_joint_acc, 'TRADE_slot_acc': trade_slot_acc})
+
         if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
             jg, slot_f1, slot_acc, slot_cnt, slot_corr = self.dialog_state_tracking_eval(data, file_list)
             jg_nn, sf1_nn, sac_nn, _, _ = self.dialog_state_tracking_eval(data, file_list, no_name=True, no_book=False)
@@ -175,6 +213,8 @@ class MultiWozEvaluator(object):
                 logging.info('-------------------------- All DOMAINS --------------------------')
             else:
                 logging.info('-------------------------- %s (# %d) -------------------------- '%(domain.upper(), dial_num))
+            if cfg.enable_trade:
+                logging.info('[TRADE] joint acc:%2.1f  slot acc: %2.1f'%(trade_joint_acc, trade_slot_acc))
             if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
                 logging.info('[DST] joint goal:%2.1f  slot acc: %2.1f  slot f1: %2.1f  act f1: %2.1f'%(jg, slot_acc, slot_f1, act_f1))
                 logging.info('[DST] [not eval name slots] joint goal:%2.1f  slot acc: %2.1f  slot f1: %2.1f'%(jg_nn, sac_nn, sf1_nn))

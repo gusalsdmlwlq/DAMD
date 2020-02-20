@@ -161,12 +161,9 @@ class Model(object):
 
                 if (iter_num+1)%cfg.report_interval==0:
                     logging.info(
-                            'iter:{} [total|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
-                                                                           float(total_loss),
-                                                                           float(losses[cfg.bspn_mode]),float(losses['aspn']),float(losses['resp']),
-                                                                           grad,
-                                                                           time.time()-btm,
-                                                                           turn_num+1))
+                            'iter:{} [total|bspn|aspn|resp|ptr|gate] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1, \
+                                float(total_loss), float(losses[cfg.bspn_mode]),float(losses['aspn']),float(losses['resp']), float(losses["trade_ptr"]), \
+                                float(losses["trade_gating"]),grad, time.time()-btm, turn_num+1))
                     if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
                         logging.info('bspn-dst:{:.3f}'.format(float(losses['bspn'])))
                     if cfg.multi_acts_training:
@@ -263,6 +260,16 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn'] if cfg.use_true_prev_dspn else decoded['dspn']
+
+                    # TRADE
+                    if cfg.enable_trade:
+                        turn_batch["trade_ptr"] = decoded["trade_ptr"]
+                        turn_batch["trade_gate"] = decoded["trade_gate"]
+
+
+
+
+
                 count += 1
                 torch.cuda.empty_cache()
 
@@ -273,10 +280,10 @@ class Model(object):
         if cfg.valid_loss not in ['score', 'match', 'success', 'bleu']:
             valid_loss /= (count + 1e-8)
         else:
-            results, _ = self.reader.wrap_result(result_collection)
+            results, _ = self.reader.wrap_result(result_collection)  # decode to sentence
             bleu, success, match = self.evaluator.validation_metric(results)
             score = 0.5 * (success + match) + bleu
-            valid_loss = 130 - score
+            valid_loss = 200 - score
             logging.info('validation [CTR] match: %2.1f  success: %2.1f  bleu: %2.1f'%(match, success, bleu))
         self.m.train()
         if do_test:
@@ -333,6 +340,14 @@ class Model(object):
                     py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                 if cfg.enable_dspn:
                     py_prev['pv_dspn'] = turn_batch['dspn'] if cfg.use_true_prev_dspn else decoded['dspn']
+
+
+                # TRADE
+                if cfg.enable_trade:
+                    turn_batch["trade_ptr"] = decoded["trade_ptr"]
+                    turn_batch["trade_gate"] = decoded["trade_gate"]
+
+                
                 torch.cuda.empty_cache()
                 # prev_z = turn_batch['bspan']
             # print('test iter %d'%(batch_num+1))

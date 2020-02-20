@@ -8,6 +8,8 @@ from torch.autograd import Variable
 from torch.distributions import Categorical
 import utils
 from config import global_config as cfg
+import trade
+
 
 np.set_printoptions(precision=2,suppress=True)
 
@@ -522,7 +524,7 @@ class ActSpanDecoder(nn.Module):
         self.dropout_layer = nn.Dropout(cfg.dropout)  # input dropout
 
 
-    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, bidx = None, mode='train'):
+    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, bidx = None, mode='train', trade_context=None):
     # def forward(self, inputs, husdx, hbspn, haspn, dec_last_w, dec_last_h, first_turn, first_step):
 
         gru_input = []
@@ -552,7 +554,10 @@ class ActSpanDecoder(nn.Module):
         gru_input.append(context_usdx)
         if cfg.enable_bspn:
             if bidx is None:
-                context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
+                if trade_context is None:
+                    context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
+                else:
+                    context_bspn = trade_context
             else:
                 context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode][bidx], self.mask_bspn[bidx])
             gru_input.append(context_bspn)
@@ -692,7 +697,7 @@ class ResponseDecoder(nn.Module):
         self.dropout_layer = nn.Dropout(self.dropout)  # input dropout
 
 
-    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, mode='train'):
+    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, bidx=None, mode='train', trade_context=None):
     # def forward(self, inputs, husdx, hbspn, haspn, dec_last_w, dec_last_h, first_turn, first_step):
 
         gru_input = []
@@ -716,8 +721,10 @@ class ResponseDecoder(nn.Module):
         # context_usdx = self.attn_usdx(dec_last_h, husdx, self.mask_usdx)
         gru_input.append(context_usdx)
         if cfg.enable_bspn:
-            context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
-            # context_bspn = self.attn_bspn(dec_last_h, hbspn, self.mask_bspn)
+            if trade_context is None:
+                context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
+            else:
+                context_bspn = trade_context
             gru_input.append(context_bspn)
         if cfg.enable_aspn:
             context_aspn = self.attn_aspn(dec_last_h, hidden_states['aspn'], self.mask_aspn)
@@ -813,6 +820,17 @@ class DAMD(nn.Module):
         self.beam_width = cfg.beam_width
         self.nbest = cfg.nbest
 
+        self.context = []
+        self.slot_list = [
+            'hotel-pricerange', 'hotel-type', 'hotel-parking', 'hotel-stay', 'hotel-day', 'hotel-people', \
+            'hotel-area', 'hotel-stars', 'hotel-internet', 'train-destination', 'train-day', 'train-departure', 'train-arriveby', \
+            'train-people', 'train-leaveat', 'attraction-area', 'restaurant-food', 'restaurant-pricerange', 'restaurant-area', \
+            'attraction-name', 'restaurant-name', 'attraction-type', 'hotel-name', 'taxi-leaveat', 'taxi-destination', 'taxi-departure', \
+            'restaurant-time', 'restaurant-day', 'restaurant-people', 'taxi-arriveby', "hospital-department"
+        ]
+        self.gating_dict = {'ptr': 0, 'dontcare': 1, 'none': 2}
+
+
         # self.module_list = nn.ModuleList()
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
@@ -854,6 +872,12 @@ class DAMD(nn.Module):
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders['bspn'] = self.dst_decoder
 
+        if cfg.enable_trade:
+            self.trade_decoder = trade.TRADE(self.embedding, self.hidden_size, self.dropout, self.slot_list, self.gating_dict, self.vocab_size, self.reader.vocab)
+            self.decoders["trade"] = self.trade_decoder
+
+
+
         self.nllloss = nn.NLLLoss(ignore_index=0)
 
 
@@ -884,10 +908,16 @@ class DAMD(nn.Module):
             # pred = torch.log(prob.view(-1, prob.size(2)))
             # print(pred[0, :50])
             if name != 'resp' or cfg.label_smoothing == .0:
-                pred = prob.view(-1, prob.size(2))   #[B,T,Voov] -> [B*T, Voov]
-                label = inputs[name+'_4loss'].view(-1)
-                # print(label[:50])
-                loss = self.nllloss(pred, label)
+                pred = prob.reshape(-1, prob.size(-1))   #[B,T,Voov] -> [B*T, Voov]
+                if name == "trade_ptr":
+                    label = torch.Tensor(inputs["ptr_label_np"]).reshape(-1).long().cuda()
+                    loss = torch.functional.F.cross_entropy(pred, label, ignore_index=0)
+                elif name == "trade_gating":
+                    label = torch.Tensor(inputs["gating_label_np"]).reshape(-1).long().cuda()
+                    loss = torch.functional.F.cross_entropy(pred, label)
+                else:
+                    label = inputs[name+'_4loss'].view(-1)
+                    loss = self.nllloss(pred, label)
                 total_loss += loss
                 losses[name] = loss
             else:
@@ -909,7 +939,6 @@ class DAMD(nn.Module):
 
         return total_loss, losses
 
-
     def forward(self, inputs, hidden_states, first_turn, mode):
         if mode == 'train' or mode == 'valid':
             # probs, hidden_states = \
@@ -928,7 +957,7 @@ class DAMD(nn.Module):
         """
         compute required outputs for a single dialogue turn. Turn state{Dict} will be updated in each call.
         """
-        def train_decode(name, init_hidden, hidden_states, probs, bidx=None):
+        def train_decode(name, init_hidden, hidden_states, probs, bidx=None, trade_context=None):
 
             batch_size = inputs['user'].size(0) if bidx is None else len(bidx)
             dec_last_w = cuda_(torch.ones(batch_size, 1).long() * self.go_idx[name])
@@ -943,8 +972,12 @@ class DAMD(nn.Module):
                 # print('%s step %d'%(name, t))
                 first_step = (t==0)
                 if bidx is None:
-                    dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w,
-                                                                          dec_last_h, first_turn, first_step)
+                    if cfg.enable_trade and name in ["aspn", "resp"]:
+                        dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w, \
+                        dec_last_h, first_turn, first_step, bidx=None, mode="train", trade_context=trade_context)
+                    else:
+                        dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w, \
+                        dec_last_h, first_turn, first_step)
                     hiddens.append(dec_last_h)
                     dec_last_w = inputs[name][:, t].view(-1, 1)
                 else:
@@ -962,8 +995,7 @@ class DAMD(nn.Module):
             else:
                 probs = self.decoders[name].get_probs(inputs, hidden_states, dec_hs, first_turn, bidx=bidx)
             return hidden_states, probs
-
-
+        
         user_enc, user_enc_last_h = self.user_encoder(inputs['user'])
         usdx_enc, usdx_enc_last_h = self.usdx_encoder(inputs['usdx'])
         resp_enc, resp_enc_last_h = self.usdx_encoder(inputs['pv_resp'])
@@ -979,17 +1011,41 @@ class DAMD(nn.Module):
             hidden_states, probs = train_decode('dspn', usdx_enc_last_h, hidden_states, probs)
 
         if cfg.enable_bspn:
+            # TRADE belief tracking
+            if cfg.enable_trade:
+                # make history (user utterance + system reponse)
+                if first_turn:
+                    self.context = torch.cat([inputs["user"], inputs["resp"]], dim=1)
+                else:
+                    self.context = torch.cat([self.context, inputs["user"], inputs["resp"]], dim=1)
+
+                encoded_outputs, encoded_hidden = self.user_encoder(self.context)  # [batch, time, hidden], [2, batch, hidden]
+                encoded_hidden = (encoded_hidden[-1] + encoded_hidden[-2]).unsqueeze(0)  # [1, batch, hidden]
+
+                # use_teacher_forcing = True if np.random.rand() >= 0.5 else False
+                use_teacher_forcing = False
+
+                all_point_outputs, all_gate_outputs, words_point_out, trade_context = self.decoders["trade"](inputs, self.context, use_teacher_forcing, \
+                    self.slot_list, encoded_outputs, encoded_hidden)
+                    # [slots, batch, max_len, vocab], [slots, batch, 3], [slots, max_len, batch], [batch, 1, hidden]
+                probs["trade_ptr"] = all_point_outputs.transpose(0,1)  # [batch, slots, max_len, vocab]
+                probs["trade_gating"] = all_gate_outputs.transpose(0,1)  # [batch, slots, 3]
+
+
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hidden_states[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h
-            hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs)
+            hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs)  # [batch, time, hidden], [batch, 1, vocab_oov]
 
         if cfg.enable_aspn:
             aspn_enc, _ = self.span_encoder(inputs['pv_aspn'])
             hidden_states['aspn'] = aspn_enc
-            hidden_states, probs = train_decode('aspn', usdx_enc_last_h, hidden_states, probs)
+            if cfg.enable_trade:
+                hidden_states, probs = train_decode('aspn', usdx_enc_last_h, hidden_states, probs, bidx=None, trade_context=trade_context)
+            else:
+                hidden_states, probs = train_decode('aspn', usdx_enc_last_h, hidden_states, probs)
 
-        hidden_states, probs = train_decode('resp', usdx_enc_last_h, hidden_states, probs)
+        hidden_states, probs = train_decode('resp', usdx_enc_last_h, hidden_states, probs, bidx=None, trade_context=trade_context)
 
         if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
             bspn_enc, _ = self.span_encoder(inputs['pv_bspn'])
@@ -1031,6 +1087,27 @@ class DAMD(nn.Module):
             hs, decoded = self.greedy_decode('dspn', usdx_enc_last_h, first_turn, inputs, hs, decoded)
 
         if cfg.enable_bspn:
+            if cfg.enable_trade:
+                if first_turn:
+                    self.context = torch.cat([inputs["user"], inputs["resp"]], dim=1)
+                else:
+                    self.context = torch.cat([self.context, inputs["user"], inputs["resp"]], dim=1)
+
+                encoded_outputs, encoded_hidden = self.user_encoder(self.context)  # [batch, time, hidden], [2, batch, hidden]
+                encoded_hidden = (encoded_hidden[-1] + encoded_hidden[-2]).unsqueeze(0)  # [1, batch, hidden]
+
+                use_teacher_forcing = False
+
+                all_point_outputs, all_gate_outputs, words_point_out, trade_context = self.decoders["trade"](inputs, self.context, use_teacher_forcing, \
+                    self.slot_list, encoded_outputs, encoded_hidden)
+
+                trade_ptr_pred = all_point_outputs.argmax(dim=-1)  # [slots, batch, max_len]
+                decoded["trade_ptr"] = trade_ptr_pred.transpose(0,1)  # [batch, slots, max_len]
+                trade_gate_pred = all_gate_outputs.argmax(dim=-1)  # [slots, batch]
+                decoded["trade_gate"] = trade_gate_pred.transpose(0,1)  # [batch, slots]
+
+
+
             bspn_enc, bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hs[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h
@@ -1049,7 +1126,10 @@ class DAMD(nn.Module):
             aspn_enc, aspn_enc_last_h = self.span_encoder(inputs['pv_aspn'])
             hs['aspn'] = aspn_enc
             if cfg.aspn_decode_mode == 'greedy':
-                hs, decoded = self.greedy_decode('aspn', usdx_enc_last_h, first_turn, inputs, hs, decoded)
+                if cfg.enable_trade:
+                    hs, decoded = self.greedy_decode('aspn', usdx_enc_last_h, first_turn, inputs, hs, decoded, trade_context)
+                else:    
+                    hs, decoded = self.greedy_decode('aspn', usdx_enc_last_h, first_turn, inputs, hs, decoded)
             elif cfg.aspn_decode_mode == 'beam':
                 if cfg.record_mode:
                     hs_nbest, decoded_nbest = self.beam_decode('aspn', usdx_enc_last_h, first_turn, inputs, hs, decoded)
@@ -1075,7 +1155,10 @@ class DAMD(nn.Module):
                     self.reader.resp_collect[b].append(decoded['resp'][b])
                     self.reader.aspn_collect[b].append(list(inputs['aspn_np'][b][:]))
         else:
-            hs, decoded = self.greedy_decode('resp', usdx_enc_last_h, first_turn, inputs, hs, decoded)
+            if cfg.enable_trade:
+                hs, decoded = self.greedy_decode('resp', usdx_enc_last_h, first_turn, inputs, hs, decoded, trade_context)
+            else:
+                hs, decoded = self.greedy_decode('resp', usdx_enc_last_h, first_turn, inputs, hs, decoded)
 
         return decoded
 
@@ -1105,7 +1188,7 @@ class DAMD(nn.Module):
             loss += reward * logprob[b, index]
         return loss
 
-    def greedy_decode(self, name, init_hidden, first_turn, inputs, hidden_states, decoded):
+    def greedy_decode(self, name, init_hidden, first_turn, inputs, hidden_states, decoded, trade_context=None):
         max_len = cfg.max_nl_length if name == 'resp' else cfg.max_span_length
         batch_size = inputs['user'].size(0)
         dec_last_w = cuda_(torch.ones(batch_size, 1).long() * self.go_idx[name])
@@ -1114,8 +1197,12 @@ class DAMD(nn.Module):
         for t in range(max_len):
             # print('%s step %d'%(name, t))
             first_step = (t==0)
-            dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w,
-                                                                         dec_last_h, first_turn, first_step, mode='test')
+            if name in ["aspn", "resp"] and cfg.enable_trade:
+                dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w, \
+                    dec_last_h, first_turn, first_step, bidx=None, mode='test', trade_context=trade_context)
+            else:
+                dec_last_h = self.decoders[name](inputs, hidden_states, dec_last_w, \
+                    dec_last_h, first_turn, first_step, mode='test')
             dec_hs = dec_last_h.transpose(0,1)
             prob_turn = self.decoders[name].get_probs(inputs, hidden_states, dec_hs, first_turn)  #[B,1,V_oov]
             hiddens.append(dec_last_h)

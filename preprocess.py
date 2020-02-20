@@ -6,6 +6,7 @@ from tqdm import tqdm
 from config import global_config as cfg
 from db_ops import MultiWozDB
 from clean_dataset import clean_slot_values, clean_text
+import numpy as np
 
 
 def get_db_values(value_set_path):
@@ -121,6 +122,14 @@ class DataPreprocessor(object):
 
         self.vocab = utils.Vocab(cfg.vocab_size)
 
+        self.slot_list = [
+            'hotel-pricerange', 'hotel-type', 'hotel-parking', 'hotel-stay', 'hotel-day', 'hotel-people', \
+            'hotel-area', 'hotel-stars', 'hotel-internet', 'train-destination', 'train-day', 'train-departure', 'train-arrive', \
+            'train-people', 'train-leave', 'attraction-area', 'restaurant-food', 'restaurant-pricerange', 'restaurant-area', \
+            'attraction-name', 'restaurant-name', 'attraction-type', 'hotel-name', 'taxi-leave', 'taxi-destination', 'taxi-departure', \
+            'restaurant-time', 'restaurant-day', 'restaurant-people', 'taxi-arrive', "hospital-department"
+        ]
+        self.gating_dict = {'ptr': 0, 'dontcare': 1, 'none': 2}
 
     def delex_by_annotation(self, dial_turn):
         u = dial_turn['text'].split()
@@ -331,6 +340,16 @@ class DataPreprocessor(object):
                             if v != '':
                                 constraint_dict[domain][s] = v
 
+
+
+                    # labels for TRADE
+                    gating_label = ["none"] * len(self.slot_list)
+                    # gating_label = np.ones(len(self.slot_list)) * self.gating_dict["none"]
+                    ptr_label = ["none"] * len(self.slot_list)
+
+
+
+
                     constraints = []
                     cons_delex = []
                     turn_dom_bs = []
@@ -342,6 +361,17 @@ class DataPreprocessor(object):
                                 constraints.append(slot)
                                 constraints.extend(value.split())
                                 cons_delex.append(slot)
+
+                                # TRADE labels
+                                idx = self.slot_list.index(domain+"-"+slot)
+                                if value == "do n't care":
+                                    gating_label[idx] = "dontcare"
+                                else:
+                                    gating_label[idx] = "ptr"
+                                ptr_label[idx] = value
+
+
+
                             if domain not in prev_constraint_dict:
                                 turn_dom_bs.append(domain)
                             elif prev_constraint_dict[domain] != constraint_dict[domain]:
@@ -440,6 +470,8 @@ class DataPreprocessor(object):
                     single_turn['sys_act'] = ' '.join(sys_act)
                     single_turn['turn_num'] = len(dial['log'])
                     single_turn['turn_domain'] = ' '.join(['['+d+']' for d in turn_domain])
+                    single_turn["gating_label"] = ",".join(gating_label)
+                    single_turn["ptr_label"] = ",".join(ptr_label)
 
                     prev_turn_domain = copy.deepcopy(turn_domain)
                     prev_constraint_dict = copy.deepcopy(constraint_dict)
