@@ -1106,8 +1106,35 @@ class DAMD(nn.Module):
                 trade_gate_pred = all_gate_outputs.argmax(dim=-1)  # [slots, batch]
                 decoded["trade_gate"] = trade_gate_pred.transpose(0,1)  # [batch, slots]
 
-
-
+                # decoded["bspn"] = torch.zeros((decoded["trade_gate"].size(0), cfg.max_span_length))  # [batch, max_len]
+                # decoded["bspn"][:, 0] = self.reader.vocab._word2idx["<eos_b>"]
+                # for bidx, batch in enumerate(decoded["trade_gate"]):
+                #     decoded_bspn = []
+                #     for idx, slot in enumerate(batch):
+                #         if slot.item() == self.gating_dict["dontcare"]:
+                #             domain_ = "["+self.slot_list[idx].split("-")[0]+"]"
+                #             slot_ = self.slot_list[idx].split("-")[1]
+                #             decoded_bspn.append(self.reader.vocab._word2idx[domain_])
+                #             decoded_bspn.append(self.reader.vocab._word2idx[slot_])
+                #             decoded_bspn.append(self.reader.vocab._word2idx["do"])
+                #             decoded_bspn.append(self.reader.vocab._word2idx["n't"])
+                #             decoded_bspn.append(self.reader.vocab._word2idx["care"])
+                #         elif slot.item() == self.gating_dict["ptr"]:
+                #             if self.reader.vocab._idx2word[decoded["trade_ptr"][bidx][idx][0].item()] != "none":
+                #                 domain_ = "["+self.slot_list[idx].split("-")[0]+"]"
+                #                 slot_ = self.slot_list[idx].split("-")[1]
+                #                 decoded_bspn.append(self.reader.vocab._word2idx[domain_])
+                #                 decoded_bspn.append(self.reader.vocab._word2idx[slot_])
+                #                 for value in decoded["trade_ptr"][bidx][idx]:
+                #                     if self.reader.vocab._idx2word[value.item()] in ["<pad>", "<eos_b>"]:
+                #                         break
+                #                     decoded_bspn.append(value.item())
+                #     decoded_bspn.append(self.reader.vocab._word2idx["<eos_b>"])
+                #     if len(decoded_bspn) <= cfg.max_span_length:
+                #         decoded["bspn"][bidx, :len(decoded_bspn)] = torch.Tensor(decoded_bspn)
+                #     else:
+                #         decoded["bspn"][bidx, :] = torch.Tensor(decoded_bspn[:cfg.max_span_length])
+                # decoded["bspn"] = decoded["bspn"].tolist()
             bspn_enc, bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hs[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h

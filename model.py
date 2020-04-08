@@ -162,7 +162,7 @@ class Model(object):
                 if (iter_num+1)%cfg.report_interval==0:
                     logging.info(
                             'iter:{} [total|bspn|aspn|resp|ptr|gate] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1, \
-                                float(total_loss), float(losses[cfg.bspn_mode]),float(losses['aspn']),float(losses['resp']), float(losses["trade_ptr"]), \
+                                float(total_loss),float(losses['bspn']),float(losses['aspn']),float(losses['resp']), float(losses["trade_ptr"]), \
                                 float(losses["trade_gating"]),grad, time.time()-btm, turn_num+1))
                     if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
                         logging.info('bspn-dst:{:.3f}'.format(float(losses['bspn'])))

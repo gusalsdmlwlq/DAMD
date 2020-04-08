@@ -42,8 +42,8 @@ class _Config:
 
         # model settings
         self.vocab_size = 3000
-        self.embed_size = 100
-        self.hidden_size = 100
+        self.embed_size = 400
+        self.hidden_size = 400
         self.pointer_dim = 6 # fixed
         self.enc_layer_num = 1
         self.dec_layer_num = 1
@@ -69,7 +69,7 @@ class _Config:
         self.lr = 0.005
         self.label_smoothing = .0
         self.lr_decay = 0.5
-        self.batch_size = 32
+        self.batch_size = 128
         self.epoch_num = 100
         self.early_stop_count = 5
         self.weight_decay_count = 3

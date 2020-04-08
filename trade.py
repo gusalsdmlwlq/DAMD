@@ -255,8 +255,8 @@ class TRADE(nn.Module):
         #     self.decoder.load_state_dict(trained_decoder.state_dict())
 
         # Initialize optimizers and criterion
-        self.optimizer = optim.Adam(self.parameters(), lr=cfg.lr)
-        self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=1, min_lr=0.0001, verbose=True)
+        # self.optimizer = optim.Adam(self.parameters(), lr=cfg.lr)
+        # self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=1, min_lr=0.0001, verbose=True)
         
         # self.reset()
         if cfg.cuda:

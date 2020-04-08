@@ -145,23 +145,26 @@ class MultiWozEvaluator(object):
                 continue
             joint_count += 1
             for idx, slot in enumerate(turn_dial["trade_gate"].tolist()):
+                slot_count += 1
                 if slot == gating_dict["dontcare"]:
-                    slot_count += 1
+                    # slot_count += 1
                     turn_dial["trade_ptr"][idx] = "do n't care"
                     if turn_dial["gating_label"][idx] == slot:
                         slot_acc += 1
                 elif slot == gating_dict["none"]:
                     turn_dial["trade_ptr"][idx] = "none"
-                    if turn_dial["gating_label"][idx] != slot:
-                        slot_count += 1
+                    if turn_dial["gating_label"][idx] == slot:
+                        slot_acc += 1
+                    # if turn_dial["gating_label"][idx] != slot:
+                    #     slot_count += 1
                 else:
-                    slot_count += 1
+                    # slot_count += 1
                     if turn_dial["gating_label"][idx] == slot and turn_dial["ptr_label"][idx] == turn_dial["trade_ptr"][idx]:
                         slot_acc += 1
             if turn_dial["ptr_label"] == turn_dial["trade_ptr"]:
                 joint_acc += 1
 
-        return joint_acc/joint_count, slot_acc/slot_count
+        return (joint_acc/joint_count)*100, (slot_acc/slot_count)*100
 
 
 
